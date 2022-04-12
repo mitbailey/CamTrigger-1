@@ -1,0 +1,3 @@
+[submodule "gpiodev"]
+	path = gpiodev
+	url = git@github.com:sunipkm/gpiodev
