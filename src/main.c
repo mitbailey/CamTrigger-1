@@ -1,12 +1,12 @@
 /**
  * @file main.c
- * @author Mit Bailey (mitbailey99@gmail.com)
- * @brief
- * @version See Git tags for version information.
- * @date 2022.04.08
- *
+ * @author your name (you@domain.com)
+ * @brief 
+ * @version 0.1
+ * @date 2022-04-13
+ * 
  * @copyright Copyright (c) 2022
- *
+ * 
  */
 
 #include "gpiodev.h"
@@ -16,6 +16,11 @@
 #include <signal.h>
 #include <unistd.h>
 #include <time.h>
+#include <netdb.h>
+#include <sys/socket.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 char *get_date()
 {
@@ -62,6 +67,11 @@ void sighandler(int sig)
 {
     done = 1;
 }
+volatile sig_atomic_t sigpipe = 0;
+void sigPipeHandler(int sig)
+{
+    sigpipe = 1;
+}
 
 static char default_pref[11] = {
     0,
@@ -72,9 +82,9 @@ static char default_pref[11] = {
 
 int main(int argc, char *argv[])
 {
-    if (argc < 4 || argc > 5)
+    if (argc < 4 || argc > 6)
     {
-        printf("Usage:\n%s <Set name> <Scan Wait time (ms)> <Exposure (ms)> [number of snaps]\n\nNote: Exposure is taken every 0.5 seconds, or 1.1 * exposure time, whichever is greater.\n\n", argv[0]);
+        printf("Usage:\n%s <Set name> <Scan Wait time (ms)> <Exposure (ms)> [number of snaps] [Gain]\n\nNote: Exposure is taken every 0.5 seconds, or 1.1 * exposure time, whichever is greater.\n\n", argv[0]);
         exit(0);
     }
     int set_num = 0;
@@ -101,13 +111,21 @@ int main(int argc, char *argv[])
     if (exposure > 2000000) // 2 s
         exposure = 2000000;
     int count = 0;
-    if (argc == 5)
+    if (argc >= 5)
         count = atoi(argv[4]);
     if (count < 10)
         count = 10;
     if (count > 100)
         count = 100;
+    int gain = 10;
+    if (argc == 6)
+        gain = atoi(argv[5]);
+    if (gain < 6)
+        gain = 6;
+    if (gain > 1023)
+        gain = 1023;
     signal(SIGINT, sighandler);
+    signal(SIGPIPE, sigPipeHandler);
     gpioSetMode(TRIGIN, GPIO_IRQ_RISE);
     gpioSetPullUpDown(TRIGIN, GPIO_PUD_DOWN);
     gpioSetMode(TRIGOUT, GPIO_OUT);
@@ -116,20 +134,101 @@ int main(int argc, char *argv[])
     memset(dirloc, 0x0, sizeof(dirloc));
     check_make_dir("/home/pi/CamTrigger/data", dirloc, sizeof(dirloc));
     int tout_count = 0;
+
+    // socket stuff
+    int sockfd = -1, connfd = -1;
+    struct sockaddr_in servaddr, cli;
+    bzero(&servaddr, sizeof(servaddr));
+    // assign IP and port
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    servaddr.sin_port = htons(65432);
+
     while (!done)
     {
         dbprintlf("Waiting");
         int retval = gpioWaitIRQ(TRIGIN, GPIO_IRQ_RISE, wait_time);
 
-        if (retval > 0)
+        if (retval >= 0)
         {
             tout_count = 0;
             // Interrupt
             // Run capture_image.py
             bprintlf("Starting image capture...");
-            char cmd[512];
-            snprintf(cmd, sizeof(cmd), "python3 /home/pi/CamTrigger/src/capture_image.py %s/%s_%d %d %d", dirloc, name_pref, set_num++, exposure, count);
-            system(cmd);
+            char base_cmd[512];
+            snprintf(base_cmd, sizeof(base_cmd), " %s/%s_%d %d %d %d", dirloc, name_pref, set_num++, exposure, count, gain);
+            char full_cmd[1024];
+            snprintf(full_cmd, sizeof(full_cmd), "%04d%s", strlen(base_cmd), base_cmd);
+            bprintlf("Sending command: %s", full_cmd);
+            sigpipe = 0;
+            sockfd = socket(AF_INET, SOCK_STREAM, 0);
+            if (sockfd == -1)
+            {
+                dbprintlf("Could not create socket");
+                goto move_on;
+            }
+            if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0)
+            {
+                dbprintlf("Could not connect to server");
+                goto move_on;
+            }
+            else
+            {
+                int sz = 0;
+                if (done) goto move_on;
+                do
+                {
+                    int out = send(sockfd, full_cmd + sz, strlen(full_cmd + sz), 0);
+                    if (out == -1)
+                    {
+
+                    }
+                    else
+                        sz += out;
+                    if (sigpipe)
+                    {
+                        goto move_on;
+                    }
+                } while (sz < strlen(full_cmd) && !done);
+                sz = 0;
+                char tmp[10];
+                memset(tmp, 0x0, sizeof(tmp));
+                if (done) goto move_on;
+                do
+                {
+                    int in = recv(sockfd, tmp + sz, 5 - sz, MSG_WAITFORONE);
+                    if (in == -1)
+                    {
+
+                    }
+                    else
+                    {
+                        sz += in;
+                    }
+                    if (sigpipe)
+                    {
+                        goto move_on;
+                    }
+                } while (sz < 5 && !done);
+                if (strlen(tmp) == 5 && strcmp(tmp, "DONE!") == 0)
+                {
+                    bprintlf("Gathered data!");
+                }
+                else if (strlen(tmp) == 5 && strcmp(tmp, "ERROR") == 0)
+                {
+                    bprintlf("Error gathering data.");
+                }
+                else if (strlen(tmp) < sizeof(tmp))
+                {
+                    bprintlf("Received: %s", tmp);
+                }
+            }
+move_on:
+            if (sockfd != -1)
+            {
+                close(sockfd);
+                sockfd = -1;
+            }
             dbprintlf("Pulsing");
             gpioWrite(TRIGOUT, GPIO_HIGH);
             usleep(10000); // 10 ms
@@ -141,13 +240,13 @@ int main(int argc, char *argv[])
             dbprintlf(FATAL "Encountered an error (%d) when waiting for an interrupt!", retval);
             return retval;
         }
-        else
+        /*else
         {
             dbprintlf("Timed out, looping to wait again.");
             tout_count++;
         }
         if (tout_count >= 10) // allow 10 timeouts
-            break;
+            break;*/
     }
 
     return 0;
