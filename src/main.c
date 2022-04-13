@@ -149,7 +149,7 @@ int main(int argc, char *argv[])
         dbprintlf("Waiting");
         int retval = gpioWaitIRQ(TRIGIN, GPIO_IRQ_RISE, wait_time);
 
-        if (retval >= 0)
+        if (retval > 0)
         {
             tout_count = 0;
             // Interrupt
@@ -240,13 +240,13 @@ move_on:
             dbprintlf(FATAL "Encountered an error (%d) when waiting for an interrupt!", retval);
             return retval;
         }
-        /*else
+        else
         {
             dbprintlf("Timed out, looping to wait again.");
             tout_count++;
         }
-        if (tout_count >= 10) // allow 10 timeouts
-            break;*/
+        if (tout_count >= 2) // allow 10 timeouts
+            break;
     }
 
     return 0;
