@@ -98,6 +98,8 @@ def callback(appsink, user_data):
                 savfname = '{}_{}_{}.npy'.format(sav_prefix, framecount, int(timestamp * 1e9) // 1000)
                 np.save(savfname, imgdata)
                 framecount += 1
+                ready = False
+                # print('In Callback:', ready)
 
                 # output_str = "Captured frame {}, Pixel Value={} Timestamp={}".format(framecount,
                 #                                                                    pixel_data,
@@ -153,17 +155,32 @@ def main():
     
     global framecount, ready, sav_prefix, done
 
+    trigger_mode_type = source.get_tcam_property_type("Trigger Mode")
+
+    source.set_tcam_property("Exposure Max", 60000) # 60 us max exposure
     # set up socket connection
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", 65432))
         sock.listen()
         sock.settimeout(1)
+        init_conn_fails = 0
         while not done: # deals with Ctrl + C
             try:
                 conn, addr = sock.accept() # accept a connection
             except socket.timeout:
+                init_conn_fails += 1
+                if init_conn_fails > 5:
+                    # reset sink props
+                    if trigger_mode_type == "enum":
+                        source.set_tcam_property("Trigger Mode", "Off")
+                    else:
+                        source.set_tcam_property("Trigger Mode", False)
+                    source.set_tcam_property("Gain Auto", True) # no auto gain
+                    source.set_tcam_property("Exposure Auto", True)
                 continue
+
+            init_conn_fails = 0
             size = conn.recv(4, socket.MSG_WAITALL) # receive first 8 bytes of the message
             try:
                 size = int(size)
@@ -216,7 +233,6 @@ def main():
             source.set_tcam_property("Exposure Time (us)", exposure) # 100000 us exposure, should be user input
             # print(source.get_tcam_property('Exposure Time (us)'))
             # set exposure mode to trigger
-            trigger_mode_type = source.get_tcam_property_type("Trigger Mode")
             if trigger_mode_type == "enum":
                 source.set_tcam_property("Trigger Mode", "On")
             else:
@@ -235,23 +251,27 @@ def main():
                     print("!!! Could not trigger. !!!\n")
                     break
                 time.sleep(time_sleep) # wait
+                # while ready and not done:
+                #     print('In trigger:', ready)
+                #     time.sleep(0.01)
                 print('Frames acquired: %d'%(framecount), end = '\r')
             print('\n')
             ready = False # stop saving images
             # set trigger mode to auto
-            if trigger_mode_type == "enum":
-                source.set_tcam_property("Trigger Mode", "Off")
-            else:
-                source.set_tcam_property("Trigger Mode", False)
-            
-            source.set_tcam_property("Gain Auto", True) # no auto gain
-            source.set_tcam_property("Exposure Auto", True)
 
             conn.sendall('DONE!'.encode('utf-8')) # indicate done
             conn.close()
 
         sock.close()
-    sink.set_property("emit-signals", False) # disable sink
+    # sink.set_property("emit-signals", False) # disable sink
+
+    if trigger_mode_type == "enum":
+        source.set_tcam_property("Trigger Mode", "Off")
+    else:
+        source.set_tcam_property("Trigger Mode", False)
+            
+    source.set_tcam_property("Gain Auto", True) # no auto gain
+    source.set_tcam_property("Exposure Auto", True)
     # deactivate trigger mode
     # this is simply to prevent confusion when the camera ist started without wanting to trigger
     time.sleep(1)
