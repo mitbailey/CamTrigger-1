@@ -113,8 +113,8 @@ int main(int argc, char *argv[])
     int count = 0;
     if (argc >= 5)
         count = atoi(argv[4]);
-    if (count < 10)
-        count = 10;
+    if (count < 5)
+        count = 5;
     if (count > 100)
         count = 100;
     int gain = 10;
