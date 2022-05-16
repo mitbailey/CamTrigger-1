@@ -1,15 +1,14 @@
 /**
  * @file main.c
  * @author your name (you@domain.com)
- * @brief 
+ * @brief
  * @version 0.1
  * @date 2022-04-13
- * 
+ *
  * @copyright Copyright (c) 2022
- * 
+ *
  */
 
-#include "gpiodev.h"
 #include "meb_print.h"
 #include <stdlib.h>
 #include <string.h>
@@ -84,7 +83,7 @@ int main(int argc, char *argv[])
 {
     if (argc < 4 || argc > 6)
     {
-        printf("Usage:\n%s <Set name> <Scan Wait time (ms)> <Exposure (ms)> [number of snaps] [Gain]\n\nNote: Exposure is taken every 0.5 seconds, or 1.1 * exposure time, whichever is greater.\n\n", argv[0]);
+        printf("Usage:\n%s <Set name> <Exposure (ms)> [number of snaps] [Gain]\n\nNote: Exposure is taken every 0.5 seconds, or 1.1 * exposure time, whichever is greater.\n\n", argv[0]);
         exit(0);
     }
     int set_num = 0;
@@ -100,35 +99,29 @@ int main(int argc, char *argv[])
     {
         name_pref = argv[1];
     }
-    int wait_time = atoi(argv[2]);
-    if (wait_time < 0)
-        wait_time = 120 * 1000;
-    if (wait_time > 10 * 60 * 1000)
-        wait_time = 10 * 60 * 1000;
-    int exposure = atoi(argv[3]);
+
+    int exposure = atoi(argv[2]);
     if (exposure < 0)
         exposure = 10000;   // 10 ms
     if (exposure > 2000000) // 2 s
         exposure = 2000000;
     int count = 0;
     if (argc >= 5)
-        count = atoi(argv[4]);
+        count = atoi(argv[3]);
     if (count < 5)
         count = 5;
     if (count > 100)
         count = 100;
     int gain = 10;
     if (argc == 6)
-        gain = atoi(argv[5]);
+        gain = atoi(argv[4]);
     if (gain < 6)
         gain = 6;
     if (gain > 1023)
         gain = 1023;
     signal(SIGINT, sighandler);
     signal(SIGPIPE, sigPipeHandler);
-    gpioSetMode(TRIGIN, GPIO_IRQ_RISE);
-    gpioSetPullUpDown(TRIGIN, GPIO_PUD_DOWN);
-    gpioSetMode(TRIGOUT, GPIO_OUT);
+
     // make dir for scan
     char dirloc[256];
     memset(dirloc, 0x0, sizeof(dirloc));
@@ -139,6 +132,7 @@ int main(int argc, char *argv[])
     int sockfd = -1, connfd = -1;
     struct sockaddr_in servaddr, cli;
     bzero(&servaddr, sizeof(servaddr));
+
     // assign IP and port
     servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
@@ -146,105 +140,87 @@ int main(int argc, char *argv[])
 
     while (!done)
     {
-        dbprintlf("Waiting");
-        int retval = gpioWaitIRQ(TRIGIN, GPIO_IRQ_RISE, wait_time);
-
-        if (retval > 0)
+        tout_count = 0;
+        // Interrupt
+        // Run capture_image.py
+        bprintlf("Starting image capture...");
+        char base_cmd[512];
+        snprintf(base_cmd, sizeof(base_cmd), " %s/%s_%d %d %d %d", dirloc, name_pref, set_num++, exposure, count, gain);
+        char full_cmd[1024];
+        snprintf(full_cmd, sizeof(full_cmd), "%04d%s", strlen(base_cmd), base_cmd);
+        bprintlf("Sending command: %s", full_cmd);
+        sigpipe = 0;
+        sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        if (sockfd == -1)
         {
-            tout_count = 0;
-            // Interrupt
-            // Run capture_image.py
-            bprintlf("Starting image capture...");
-            char base_cmd[512];
-            snprintf(base_cmd, sizeof(base_cmd), " %s/%s_%d %d %d %d", dirloc, name_pref, set_num++, exposure, count, gain);
-            char full_cmd[1024];
-            snprintf(full_cmd, sizeof(full_cmd), "%04d%s", strlen(base_cmd), base_cmd);
-            bprintlf("Sending command: %s", full_cmd);
-            sigpipe = 0;
-            sockfd = socket(AF_INET, SOCK_STREAM, 0);
-            if (sockfd == -1)
-            {
-                dbprintlf("Could not create socket");
-                goto move_on;
-            }
-            if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0)
-            {
-                dbprintlf("Could not connect to server");
-                goto move_on;
-            }
-            else
-            {
-                int sz = 0;
-                if (done) goto move_on;
-                do
-                {
-                    int out = send(sockfd, full_cmd + sz, strlen(full_cmd + sz), 0);
-                    if (out == -1)
-                    {
-
-                    }
-                    else
-                        sz += out;
-                    if (sigpipe)
-                    {
-                        goto move_on;
-                    }
-                } while (sz < strlen(full_cmd) && !done);
-                sz = 0;
-                char tmp[10];
-                memset(tmp, 0x0, sizeof(tmp));
-                if (done) goto move_on;
-                do
-                {
-                    int in = recv(sockfd, tmp + sz, 5 - sz, MSG_WAITFORONE);
-                    if (in == -1)
-                    {
-
-                    }
-                    else
-                    {
-                        sz += in;
-                    }
-                    if (sigpipe)
-                    {
-                        goto move_on;
-                    }
-                } while (sz < 5 && !done);
-                if (strlen(tmp) == 5 && strcmp(tmp, "DONE!") == 0)
-                {
-                    bprintlf("Gathered data!");
-                }
-                else if (strlen(tmp) == 5 && strcmp(tmp, "ERROR") == 0)
-                {
-                    bprintlf("Error gathering data.");
-                }
-                else if (strlen(tmp) < sizeof(tmp))
-                {
-                    bprintlf("Received: %s", tmp);
-                }
-            }
-move_on:
-            if (sockfd != -1)
-            {
-                close(sockfd);
-                sockfd = -1;
-            }
-            dbprintlf("Pulsing");
-            gpioWrite(TRIGOUT, GPIO_HIGH);
-            usleep(10000); // 10 ms
-            gpioWrite(TRIGOUT, GPIO_LOW);
+            dbprintlf("Could not create socket");
+            goto move_on;
         }
-        else if (retval < -1)
+        if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0)
         {
-            // Error
-            dbprintlf(FATAL "Encountered an error (%d) when waiting for an interrupt!", retval);
-            return retval;
+            dbprintlf("Could not connect to server");
+            goto move_on;
         }
         else
         {
-            dbprintlf("Timed out, looping to wait again.");
-            tout_count++;
+            int sz = 0;
+            if (done)
+                goto move_on;
+            do
+            {
+                int out = send(sockfd, full_cmd + sz, strlen(full_cmd + sz), 0);
+                if (out == -1)
+                {
+                }
+                else
+                    sz += out;
+                if (sigpipe)
+                {
+                    goto move_on;
+                }
+            } while (sz < strlen(full_cmd) && !done);
+            sz = 0;
+            char tmp[10];
+            memset(tmp, 0x0, sizeof(tmp));
+            if (done)
+                goto move_on;
+            do
+            {
+                int in = recv(sockfd, tmp + sz, 5 - sz, MSG_WAITFORONE);
+                if (in == -1)
+                {
+                }
+                else
+                {
+                    sz += in;
+                }
+                if (sigpipe)
+                {
+                    goto move_on;
+                }
+            } while (sz < 5 && !done);
+            if (strlen(tmp) == 5 && strcmp(tmp, "DONE!") == 0)
+            {
+                bprintlf("Gathered data!");
+            }
+            else if (strlen(tmp) == 5 && strcmp(tmp, "ERROR") == 0)
+            {
+                bprintlf("Error gathering data.");
+            }
+            else if (strlen(tmp) < sizeof(tmp))
+            {
+                bprintlf("Received: %s", tmp);
+            }
         }
+    move_on:
+        if (sockfd != -1)
+        {
+            close(sockfd);
+            sockfd = -1;
+        }
+        done = 1;
+        break; // done
+
         if (tout_count >= 2) // allow 10 timeouts
             break;
     }

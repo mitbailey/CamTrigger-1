@@ -95,7 +95,7 @@ def callback(appsink, user_data):
             global framecount, ready, sav_prefix
 
             if (ready):
-                savfname = '{}_{}_{}.npy'.format(sav_prefix, framecount, int(timestamp * 1e9) // 1000)
+                savfname = '{}_{}_{}.npy'.format(sav_prefix, int(timestamp * 1e9) // 1000, framecount)
                 np.save(savfname, imgdata)
                 framecount += 1
                 ready = False
@@ -226,11 +226,11 @@ def main():
             # at this point we have all valid data
 
             # Set source props
-            source.set_tcam_property("Gain Auto", False) # no auto gain
-            source.set_tcam_property("Gain", gain) # max
-            source.set_tcam_property("Exposure Auto", False)
+            source.set_tcam_property("Gain Auto", True) # no auto gain
+            # source.set_tcam_property("Gain", gain) # max
+            source.set_tcam_property("Exposure Auto", True)
             # print(source.get_tcam_property('Gain'))
-            source.set_tcam_property("Exposure Time (us)", exposure) # 100000 us exposure, should be user input
+            # source.set_tcam_property("Exposure Time (us)", exposure) # 100000 us exposure, should be user input
             # print(source.get_tcam_property('Exposure Time (us)'))
             # set exposure mode to trigger
             if trigger_mode_type == "enum":
