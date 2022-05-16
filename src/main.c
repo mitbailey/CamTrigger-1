@@ -23,7 +23,7 @@
 
 char *get_date()
 {
-    static char buf[10];
+    static char buf[35];
     time_t t = time(NULL);
     struct tm dt = *localtime(&t);
     snprintf(buf, sizeof(buf), "%04d%02d%02d", dt.tm_year + 1900, dt.tm_mon + 1, dt.tm_mday);
@@ -43,7 +43,7 @@ int check_make_dir(char *prefix, char *loc, int size)
 {
     char dir[256];
     int dirsz = snprintf(dir, sizeof(dir), "%s/%s/%s", prefix, get_date(), get_time());
-    char cmd[256];
+    char cmd[512];
     snprintf(cmd, sizeof(cmd), "mkdir -p %s", dir);
     int res = system(cmd);
     if (!res)
